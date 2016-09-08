@@ -38,7 +38,8 @@ include:
 {%- if user == None -%}
 {%- set user = {} -%}
 {%- endif -%}
-{%- set home = user.get('home', "/home/%s" % name) -%}
+{%- set current = salt.user.info(name) -%}
+{%- set home = user.get('home', current.get('home', "/home/%s" % name)) -%}
 
 {%- if 'prime_group' in user and 'name' in user['prime_group'] %}
 {%- set user_group = user.prime_group.name -%}
@@ -79,7 +80,7 @@ users_{{ name }}_user:
   user.present:
     - name: {{ name }}
     - home: {{ home }}
-    - shell: {{ user.get('shell', users.get('shell', '/bin/bash')) }}
+    - shell: {{ user.get('shell', current.get('shell', users.get('shell', '/bin/bash'))) }}
     {% if 'uid' in user -%}
     - uid: {{ user['uid'] }}
     {% endif -%}
@@ -134,6 +135,12 @@ users_{{ name }}_user:
       {% for group in user.get('groups', []) -%}
       - {{ group }}
       {% endfor %}
+    {% if 'optional_groups' in user %}
+    - optional_groups:
+      {% for optional_group in user['optional_groups'] -%}
+      - {{optional_group}}
+      {% endfor %}
+    {% endif %}
     - require:
       - group: {{ user_group }}
       {% for group in user.get('groups', []) -%}
@@ -149,7 +156,7 @@ users_{{ name }}_user:
       'ssh_config' in user %}
 user_keydir_{{ name }}:
   file.directory:
-    - name: {{ user.get('home', '/home/{0}'.format(name)) }}/.ssh
+    - name: {{ home }}/.ssh
     - user: {{ name }}
     - group: {{ user_group }}
     - makedirs: True
@@ -166,8 +173,7 @@ user_keydir_{{ name }}:
   {% set key_type = 'id_' + user.get('ssh_key_type', 'rsa') %}
 users_user_{{ name }}_private_key:
   file.managed:
-    - name: {{ user.get('home',
-                  '/home/{0}'.format(name)) }}/.ssh/{{ key_type }}
+    - name: {{ home }}/.ssh/{{ key_type }}
     - user: {{ name }}
     - group: {{ user_group }}
     - mode: 600
@@ -180,8 +186,7 @@ users_user_{{ name }}_private_key:
       {% endfor %}
 users_user_{{ name }}_public_key:
   file.managed:
-    - name: {{ user.get('home',
-                  '/home/{0}'.format(name)) }}/.ssh/{{ key_type }}.pub
+    - name: {{ home }}/.ssh/{{ key_type }}.pub
     - user: {{ name }}
     - group: {{ user_group }}
     - mode: 644
@@ -229,8 +234,7 @@ users_ssh_auth_{{ name }}_{{ loop.index0 }}:
 {% for key_name, pillar_name in user['ssh_keys_pillar'].items() %}
 user_ssh_keys_files_{{ name }}_{{ key_name }}_private_key:
   file.managed:
-    - name: {{ user.get('home',
-                  '/home/{0}'.format(name)) }}/.ssh/{{ key_name }}
+    - name: {{ home }}/.ssh/{{ key_name }}
     - user: {{ name }}
     - group: {{ user_group }}
     - mode: 600
@@ -243,8 +247,7 @@ user_ssh_keys_files_{{ name }}_{{ key_name }}_private_key:
       {% endfor %}
 user_ssh_keys_files_{{ name }}_{{ key_name }}_public_key:
   file.managed:
-    - name: {{ user.get('home',
-                  '/home/{0}'.format(name)) }}/.ssh/{{ key_name }}.pub
+    - name: {{ home }}/.ssh/{{ key_name }}.pub
     - user: {{ name }}
     - group: {{ user_group }}
     - mode: 644
@@ -338,6 +341,7 @@ users_ssh_known_hosts_delete_{{ name }}_{{ loop.index0 }}:
 
 users_sudoer-{{ name }}:
   file.managed:
+    - replace: False
     - name: {{ users.sudoers_dir }}/{{ name }}
     - user: root
     - group: {{ users.root_group }}
@@ -376,6 +380,7 @@ users_sudoer-{{ name }}:
 
 users_{{ users.sudoers_dir }}/{{ name }}:
   file.managed:
+    - replace: True
     - name: {{ users.sudoers_dir }}/{{ name }}
     - contents: |
       {%- if 'sudo_defaults' in user %}
@@ -473,7 +478,8 @@ users_{{ users.sudoers_dir }}/{{ name }}:
 
 {% for user in pillar.get('absent_users', []) %}
 users_absent_user_2_{{ user }}:
-  user.absent
+  user.absent:
+    - name: {{ name }}
 users_2_{{ users.sudoers_dir }}/{{ user }}:
   file.absent:
     - name: {{ users.sudoers_dir }}/{{ user }}
